@@ -1,0 +1,172 @@
+From adebe9f7080df129d4cd5128fdbab2aeeba223b4 Mon Sep 17 00:00:00 2001
+From: arter97 <qkrwngud825@gmail.com>
+Date: Sun, 7 Jun 2015 12:24:24 +0900
+Subject: [PATCH] powersuspend: add power_suspended boolean for global access
+
+Some routines just need the boolean for whether powersuspend is active or not.
+
+Rather than hooking to the powersuspend on every occasions,
+add power_suspended boolean for global access.
+
+Signed-off-by: arter97 <qkrwngud825@gmail.com>
+---
+ drivers/cpufreq/cpufreq_arteractive.c | 26 ++------------------------
+ drivers/input/keyboard/gpio_keys.c    | 12 +++---------
+ include/linux/powersuspend.h          |  2 ++
+ kernel/power/powersuspend.c           |  4 ++++
+ 4 files changed, 11 insertions(+), 33 deletions(-)
+
+diff --git a/drivers/cpufreq/cpufreq_arteractive.c b/drivers/cpufreq/cpufreq_arteractive.c
+index 5de1de2..033a4cc 100644
+--- a/drivers/cpufreq/cpufreq_arteractive.c
++++ b/drivers/cpufreq/cpufreq_arteractive.c
+@@ -102,9 +102,6 @@ struct cpufreq_interactive_cpuinfo {
+ 
+ static DEFINE_PER_CPU(struct cpufreq_interactive_cpuinfo, cpuinfo);
+ 
+-/* boolean for determining screen on/off state */
+-static bool suspended = false;
+-
+ /* realtime thread handles frequency scaling */
+ static struct task_struct *speedchange_task;
+ static cpumask_t speedchange_cpumask;
+@@ -730,8 +727,8 @@ static void __cpufreq_interactive_timer(unsigned long data, bool is_notif)
+ 	pcpu->policy->util = cpu_load;
+ #endif
+ 
+-	if ( (suspended && (cpu_load >= DEFAULT_GO_HISPEED_LOAD_SCREEN_OFF)) ||
+-	    (!suspended && (cpu_load >= go_hispeed_load)) ||
++	if ( (power_suspended && (cpu_load >= DEFAULT_GO_HISPEED_LOAD_SCREEN_OFF)) ||
++	    (!power_suspended && (cpu_load >= go_hispeed_load)) ||
+ 	     (boosted)) {
+ 		if (pcpu->policy->cpu == 0) {
+ 			if (pcpu->target_freq < this_hispeed_freq) {
+@@ -2011,23 +2008,6 @@ static void cpufreq_interactive_nop_timer(unsigned long data)
+ {
+ }
+ 
+-static void arteractive_early_suspend(struct power_suspend *handler)
+-{
+-	suspended = true;
+-	return;
+-}
+-
+-static void arteractive_late_resume(struct power_suspend *handler)
+-{
+-	suspended = false;
+-	return;
+-}
+-
+-static struct power_suspend arteractive_suspend = {
+-	.suspend = arteractive_early_suspend,
+-	.resume = arteractive_late_resume,
+-};
+-
+ static void cpufreq_interactive_timer(unsigned long data)
+ {
+ 	__cpufreq_interactive_timer(data, false);
+@@ -2060,8 +2040,6 @@ static int __init cpufreq_arteractive_init(void)
+ #endif
+ 	}
+ 
+-	register_power_suspend(&arteractive_suspend);
+-
+ 	spin_lock_init(&target_loads_lock);
+ 	spin_lock_init(&speedchange_cpumask_lock);
+ 	spin_lock_init(&above_hispeed_delay_lock);
+diff --git a/drivers/input/keyboard/gpio_keys.c b/drivers/input/keyboard/gpio_keys.c
+index 01d27e1..e755284 100644
+--- a/drivers/input/keyboard/gpio_keys.c
++++ b/drivers/input/keyboard/gpio_keys.c
+@@ -157,11 +157,9 @@ static void sync_system(struct work_struct *work);
+ static DECLARE_WORK(sync_system_work, sync_system);
+ struct wake_lock sync_wake_lock;
+ 
+-static bool suspended = false;
+-
+ static void sync_system(struct work_struct *work)
+ {
+-	if (suspended)
++	if (power_suspended)
+ 		msleep(5000);
+ 
+ 	pr_info("%s +\n", __func__);
+@@ -531,7 +529,7 @@ extern void mdnie_toggle_negative(void);
+ void gpio_sync_worker(bool pwr)
+ {
+ 	/* sys_sync(); */
+-	if (suspended) {
++	if (power_suspended) {
+ 		if (pwr)
+ 			pr_info("%s: KEY_POWER pressed, calling sys_sync() in 5 sec...\n", __func__);
+ 		else
+@@ -565,7 +563,7 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
+ 	}
+ 	input_sync(input);
+ 
+-	if (!suspended) {
++	if (!power_suspended) {
+ 		//mdnie negative effect toggle by gm
+ 		if (button->code == 172) {
+ 			if (state) {
+@@ -595,8 +593,6 @@ static void gpio_keys_early_suspend(struct power_suspend *handler)
+ 		container_of(handler, struct gpio_keys_drvdata,
+ 				power_suspend);
+ 
+-	suspended = true;
+-
+ 	gpio_keys_suspend(ddata);
+ 
+ 	return;
+@@ -608,8 +604,6 @@ static void gpio_keys_late_resume(struct power_suspend *handler)
+ 		container_of(handler, struct gpio_keys_drvdata,
+ 				power_suspend);
+ 
+-	suspended = false;
+-
+ 	gpio_keys_resume(ddata);
+ 
+ 	return;
+diff --git a/include/linux/powersuspend.h b/include/linux/powersuspend.h
+index 5d18702..481ebf6 100644
+--- a/include/linux/powersuspend.h
++++ b/include/linux/powersuspend.h
+@@ -50,5 +50,7 @@ void unregister_power_suspend(struct power_suspend *handler);
+ void set_power_suspend_state_autosleep_hook(int new_state);
+ void set_power_suspend_state_panel_hook(int new_state);
+ 
++extern bool power_suspended;
++
+ #endif
+ 
+diff --git a/kernel/power/powersuspend.c b/kernel/power/powersuspend.c
+index 2b7fe50..85250e5 100644
+--- a/kernel/power/powersuspend.c
++++ b/kernel/power/powersuspend.c
+@@ -136,6 +136,8 @@ abort_resume:
+ 	mutex_unlock(&power_suspend_lock);
+ }
+ 
++bool power_suspended = false;
++
+ void set_power_suspend_state(int new_state)
+ {
+ 	unsigned long irqflags;
+@@ -146,12 +148,14 @@ void set_power_suspend_state(int new_state)
+ 		pr_info("[POWERSUSPEND] state activated.\n");
+ 		#endif
+ 		state = new_state;
++		power_suspended = true;
+ 		queue_work(suspend_work_queue, &power_suspend_work);
+ 	} else if (state == POWER_SUSPEND_ACTIVE && new_state == POWER_SUSPEND_INACTIVE) {
+ 		#ifdef POWER_SUSPEND_DEBUG
+ 		pr_info("[POWERSUSPEND] state deactivated.\n");
+ 		#endif
+ 		state = new_state;
++		power_suspended = false;
+ 		queue_work(suspend_work_queue, &power_resume_work);
+ 	}
+ 	spin_unlock_irqrestore(&state_lock, irqflags);
+-- 
+2.1.1
+
