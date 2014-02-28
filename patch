@@ -1,0 +1,32 @@
+From 79945454ce9c82afa9288ebf8250aa8de45cb217 Mon Sep 17 00:00:00 2001
+From: myfluxi <linflux@arcor.de>
+Date: Wed, 8 Jan 2014 01:25:14 +0100
+Subject: [PATCH] PM: devfreq: Use high priority workqueue
+
+It does not make sense to run kgsl on high and devfreq on regular
+priority.
+
+Change-Id: Ie5e6c9353a4e1324a6a49278e5ad3638462f551c
+---
+ drivers/devfreq/devfreq.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/devfreq/devfreq.c b/drivers/devfreq/devfreq.c
+index 7167f2b..2aaa2ee 100644
+--- a/drivers/devfreq/devfreq.c
++++ b/drivers/devfreq/devfreq.c
+@@ -1044,7 +1044,10 @@ static int __init devfreq_init(void)
+ 		return PTR_ERR(devfreq_class);
+ 	}
+ 
+-	devfreq_wq = create_freezable_workqueue("devfreq_wq");
++	devfreq_wq =
++	    alloc_workqueue("devfreq_wq",
++			    WQ_HIGHPRI | WQ_UNBOUND | WQ_FREEZABLE |
++			    WQ_MEM_RECLAIM, 0);
+ 	if (IS_ERR(devfreq_wq)) {
+ 		class_destroy(devfreq_class);
+ 		pr_err("%s: couldn't create workqueue\n", __FILE__);
+-- 
+2.1.1
+
