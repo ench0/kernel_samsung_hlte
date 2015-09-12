@@ -83,3 +83,6 @@ GTAGS
 *.orig
 *~
 \#*#
+
+# KDE stuff
+.directory
